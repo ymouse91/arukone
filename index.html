@@ -1,0 +1,1183 @@
+<!doctype html>
+<html lang="fi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f3f4f6">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Arukone">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>Arukone</title>
+<style>
+  :root {
+    --bg:#f3f4f6; --panel:#ffffff; --ink:#111827; --muted:#6b7280; --grid:#d1d5db;
+    --accent:#2563eb; --ok:#16a34a; --warn:#dc2626;
+    --board:min(calc(100vw - 24px), 430px);
+    --cell:calc(var(--board) / 9);
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; min-height:100%; background:var(--bg); color:var(--ink); font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  body { display:flex; justify-content:center; }
+  .app { width:100%; max-width:460px; padding:10px 8px 20px; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:4px 4px 8px; }
+  h1 { margin:0; font-size:22px; line-height:1; }
+  .version { font-size:11px; color:var(--muted); margin-top:3px; }
+  button { border:1px solid #d1d5db; background:white; color:var(--ink); border-radius:12px; font:inherit; font-weight:700; min-height:42px; padding:8px 12px; }
+  button.primary { background:var(--accent); color:white; border-color:var(--accent); }
+  .panel { background:var(--panel); border:1px solid #e5e7eb; border-radius:18px; padding:10px; margin-bottom:10px; box-shadow:0 4px 18px rgba(0,0,0,.08); }
+  .controls { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .status { min-height:28px; font-size:14px; line-height:1.35; color:var(--muted); padding:8px 2px 0; }
+  .status.ok { color:var(--ok); font-weight:800; }
+  .status.bad { color:var(--warn); }
+  .boardPanel { display:flex; justify-content:center; padding:8px 0; }
+  .board { width:var(--board); height:var(--board); position:relative; display:grid; grid-template-columns:repeat(9, 1fr); grid-template-rows:repeat(9, 1fr); background:#fff; border:3px solid #1f2937; border-radius:10px; overflow:hidden; touch-action:none; user-select:none; }
+  .cell { position:relative; border:1px solid var(--grid); display:flex; align-items:center; justify-content:center; z-index:1; }
+  .cell.given { z-index:4; }
+  .cell.active { outline:2px solid #111827; outline-offset:-4px; }
+  .dot { width:58%; height:58%; max-width:30px; max-height:30px; border-radius:999px; display:flex; align-items:center; justify-content:center; color:white; font-size:14px; font-weight:900; text-shadow:0 1px 2px rgba(0,0,0,.55); border:2px solid rgba(255,255,255,.85); position:relative; z-index:5; }
+  svg.paths { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:2; }
+  .pathGlow { fill:none; stroke-linecap:round; stroke-linejoin:round; opacity:.20; }
+  .pathLine { fill:none; stroke-linecap:round; stroke-linejoin:round; opacity:.95; }
+  .legend { display:flex; flex-wrap:wrap; justify-content:center; gap:6px; font-size:12px; }
+  .chip { background:white; border:1px solid #e5e7eb; padding:4px 8px; border-radius:999px; }
+  .help { font-size:12px; color:var(--muted); line-height:1.35; margin-top:8px; text-align:center; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div><h1>Arukone</h1><div class="version">PWA · puzzles.json · generaattori mukana</div></div>
+    <button id="helpBtn">Ohje</button>
+  </header>
+
+  <section class="panel">
+    <div class="controls">
+      <button id="newBtn" class="primary" disabled>Uusi pulma</button>
+      <button id="clearBtn" disabled>Tyhjennä</button>
+      <button id="solutionBtn" disabled>Näytä ratkaisu</button>
+      <button id="generateBtn">Generoi</button>
+    </div>
+    <div id="status" class="status">Vedä viiva värillisestä pisteestä saman kirjaimen pisteeseen.</div>
+  </section>
+
+  <section class="panel boardPanel">
+    <div id="board" class="board"></div>
+  </section>
+
+  <section class="panel">
+    <div id="legend" class="legend"></div>
+    <div class="help">Viivat kulkevat vain vaaka- ja pystysuunnassa. Keskeneräinen viiva poistuu, kun nostat sormen.</div>
+  </section>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
+    });
+  }
+
+  const N = 9;
+  const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const COLORS = [
+    '#ff1f5b','#2f7df6','#22c55e','#ffad0a','#8b45ff','#15aeca',
+    '#ef2f90','#76c900','#f97316','#1f5f8b','#e11d48','#10b981',
+    '#7c3aed','#facc15','#0ea5e9','#a16207'
+  ];
+  const PUZZLES = [{"count":8,"givens":[[0,null,null,null,null,null,null,null,null],[1,null,null,null,null,null,1,0,null],[2,null,null,null,null,null,null,null,null],[null,null,null,null,null,3,2,null,null],[null,null,null,3,4,null,null,null,null],[null,null,null,null,5,4,null,null,null],[null,null,null,null,null,5,6,null,null],[null,7,6,null,null,null,null,null,null],[null,null,null,null,null,null,null,null,7]],"endpoints":[[{"r":0,"c":0},{"r":1,"c":7}],[{"r":1,"c":6},{"r":1,"c":0}],[{"r":2,"c":0},{"r":3,"c":6}],[{"r":3,"c":5},{"r":4,"c":3}],[{"r":4,"c":4},{"r":5,"c":5}],[{"r":5,"c":4},{"r":6,"c":5}],[{"r":6,"c":6},{"r":7,"c":2}],[{"r":7,"c":1},{"r":8,"c":8}]]},{"count":8,"givens":[[7,null,null,null,null,null,null,null,null],[null,null,null,null,null,null,6,7,null],[6,5,null,null,null,null,null,null,null],[null,null,null,null,null,null,4,5,null],[null,null,4,3,null,null,null,null,null],[null,null,null,null,2,3,null,null,null],[null,null,null,null,null,2,1,null,null],[null,null,null,null,null,null,null,null,null],[null,1,0,null,null,null,null,null,0]],"endpoints":[[{"r":8,"c":8},{"r":8,"c":2}],[{"r":8,"c":1},{"r":6,"c":6}],[{"r":6,"c":5},{"r":5,"c":4}],[{"r":5,"c":5},{"r":4,"c":3}],[{"r":4,"c":2},{"r":3,"c":6}],[{"r":3,"c":7},{"r":2,"c":1}],[{"r":2,"c":0},{"r":1,"c":6}],[{"r":1,"c":7},{"r":0,"c":0}]]}];
+
+  const board = document.getElementById('board');
+  const statusEl = document.getElementById('status');
+  const legend = document.getElementById('legend');
+  const newBtn = document.getElementById('newBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const solutionBtn = document.getElementById('solutionBtn');
+  const generateBtn = document.getElementById('generateBtn');
+  const helpBtn = document.getElementById('helpBtn');
+
+  let puzzleNumber = 1;
+  let puzzle = null;
+  let loadedPuzzles = [];
+  let loadedPuzzleIndex = -1;
+  let grid = blank(null);
+  let paths = {};
+  let active = null;
+  let pointerIsDown = false;
+  let solvedShown = false;
+
+  function puzzleSize(source=puzzle) {
+    return Number(source && source.size) || (source && Array.isArray(source.givens) ? source.givens.length : N);
+  }
+  function blank(value, n=N) { return Array.from({length:n}, () => Array(n).fill(value)); }
+  function same(a,b) { return a && b && a.r === b.r && a.c === b.c; }
+  function man(a,b) { return Math.abs(a.r-b.r) + Math.abs(a.c-b.c); }
+  function isInside(r,c,n=N) { return r>=0 && r<n && c>=0 && c<n; }
+  function givenAt(r,c) { return puzzle.givens[r][c]; }
+  function setStatus(text, cls='') { statusEl.textContent = text; statusEl.className = 'status ' + cls; }
+  function pathKey(p) { return p.r + ',' + p.c; }
+  function labelFor(id) { return LETTERS[id] || String(id + 1); }
+  function colorFor(id) { return COLORS[id] || 'hsl(' + ((id * 47) % 360) + ' 82% 48%)'; }
+  function randInt(n) { return Math.floor(Math.random() * n); }
+
+  function shuffled(items) {
+    const result = items.slice();
+    for (let i=result.length-1; i>0; i--) {
+      const j = randInt(i + 1);
+      [result[i], result[j]] = [result[j], result[i]];
+    }
+    return result;
+  }
+
+  function neighbors(p, n=N) {
+    return [
+      {r:p.r-1, c:p.c},
+      {r:p.r+1, c:p.c},
+      {r:p.r, c:p.c-1},
+      {r:p.r, c:p.c+1}
+    ].filter(q => isInside(q.r, q.c, n));
+  }
+
+  function generateFullPath() {
+    const maxAttempts = 80;
+    const maxCalls = 25000;
+
+    for (let attempt=0; attempt<maxAttempts; attempt++) {
+      const visited = blank(false);
+      const start = {r:randInt(N), c:randInt(N)};
+      const path = [start];
+      let calls = 0;
+      visited[start.r][start.c] = true;
+
+      function onwardCount(p) {
+        return neighbors(p).filter(q => !visited[q.r][q.c]).length;
+      }
+
+      function search(p) {
+        calls++;
+        if (path.length === N * N) return true;
+        if (calls > maxCalls) return false;
+
+        const options = shuffled(neighbors(p).filter(q => !visited[q.r][q.c]))
+          .map(q => ({p:q, score:onwardCount(q) + Math.random() * 0.4}))
+          .sort((a,b) => a.score - b.score);
+
+        for (const option of options) {
+          const q = option.p;
+          visited[q.r][q.c] = true;
+          path.push(q);
+          if (search(q)) return true;
+          path.pop();
+          visited[q.r][q.c] = false;
+        }
+        return false;
+      }
+
+      if (search(start)) return path;
+    }
+    return null;
+  }
+
+  function splitLengths(total, count) {
+    const shortMin = 4;
+    const longMin = 24;
+    const longMax = 34;
+    const longCount = Math.random() < 0.7 ? 2 : 1;
+    if (total < longCount * longMin + (count - longCount) * shortMin) return null;
+
+    const lengths = [];
+    let remaining = total;
+    for (let i=0; i<longCount; i++) {
+      const longLeft = longCount - i - 1;
+      const shortLeft = count - longCount;
+      const maxLength = remaining - longLeft * longMin - shortLeft * shortMin;
+      const length = longMin + randInt(Math.max(1, Math.min(longMax, maxLength) - longMin + 1));
+      lengths.push(length);
+      remaining -= length;
+    }
+    const shortCount = count - longCount;
+
+    for (let i=0; i<shortCount; i++) {
+      const left = shortCount - i - 1;
+      if (left === 0) {
+        lengths.push(remaining);
+        break;
+      }
+      const maxLength = remaining - left * shortMin;
+      const softMax = Math.max(shortMin, Math.min(maxLength, 13));
+      const length = shortMin + randInt(softMax - shortMin + 1);
+      lengths.push(length);
+      remaining -= length;
+    }
+    return shuffled(lengths);
+  }
+
+  function makePuzzleFromPaths(generatedPaths) {
+    const givens = blank(null);
+    const endpoints = generatedPaths.map((path, id) => {
+      const first = path[0];
+      const last = path[path.length - 1];
+      givens[first.r][first.c] = id;
+      givens[last.r][last.c] = id;
+      return [{r:first.r, c:first.c}, {r:last.r, c:last.c}];
+    });
+    const answerPaths = generatedPaths.map(path => path.map(p => ({r:p.r, c:p.c})));
+    return {size:N, count:generatedPaths.length, givens, endpoints, answerPaths};
+  }
+
+  function shufflePathIds(generatedPaths) {
+    return shuffled(generatedPaths).map(path => path.map(p => ({r:p.r, c:p.c})));
+  }
+
+  function pathTurnCount(path) {
+    let turns = 0;
+    for (let i=2; i<path.length; i++) {
+      const a = path[i - 2];
+      const b = path[i - 1];
+      const c = path[i];
+      const prev = {r:b.r - a.r, c:b.c - a.c};
+      const next = {r:c.r - b.r, c:c.c - b.c};
+      if (prev.r !== next.r || prev.c !== next.c) turns++;
+    }
+    return turns;
+  }
+
+  function longestStraightRun(path) {
+    let longest = 1;
+    let current = 1;
+    let lastDir = null;
+    for (let i=1; i<path.length; i++) {
+      const dir = {r:path[i].r - path[i - 1].r, c:path[i].c - path[i - 1].c};
+      if (lastDir && dir.r === lastDir.r && dir.c === lastDir.c) current++;
+      else current = 1;
+      longest = Math.max(longest, current);
+      lastDir = dir;
+    }
+    return longest;
+  }
+
+  function edgeCellCount(path) {
+    return path.filter(p => p.r === 0 || p.r === N - 1 || p.c === 0 || p.c === N - 1).length;
+  }
+
+  function selfTouchCount(path) {
+    let touches = 0;
+    for (let i=0; i<path.length; i++) {
+      for (let j=i+2; j<path.length; j++) {
+        if (i === 0 && j === path.length - 1) continue;
+        if (man(path[i], path[j]) === 1) touches++;
+      }
+    }
+    return touches;
+  }
+
+  function pathHasSelfSideContact(path) {
+    return selfTouchCount(path) > 0;
+  }
+
+  function switchableBlockCount(generatedPaths) {
+    const owner = blank(-1);
+    generatedPaths.forEach((path, id) => path.forEach(p => { owner[p.r][p.c] = id; }));
+    let count = 0;
+    for (let r=0; r<N-1; r++) for (let c=0; c<N-1; c++) {
+      const cells = [
+        {r, c, id:owner[r][c]},
+        {r, c:c+1, id:owner[r][c+1]},
+        {r:r+1, c, id:owner[r+1][c]},
+        {r:r+1, c:c+1, id:owner[r+1][c+1]}
+      ];
+      if (cells.some(cell => cell.id < 0)) continue;
+      const ids = [...new Set(cells.map(cell => cell.id))];
+      if (ids.length !== 2) continue;
+      const a = cells.filter(cell => cell.id === ids[0]);
+      const b = cells.filter(cell => cell.id === ids[1]);
+      if (a.length !== 2 || b.length !== 2) continue;
+      if (man(a[0], a[1]) === 1 && man(b[0], b[1]) === 1) count++;
+    }
+    return count;
+  }
+
+  function generatedPathsQualityProblem(generatedPaths) {
+    if (generatedPaths.some(path => path.length >= 18 && selfTouchCount(path) > 2)) return 'self-side-contact';
+    return '';
+  }
+
+  function pathBounds(path) {
+    return path.reduce((box, p) => ({
+      minR:Math.min(box.minR, p.r),
+      maxR:Math.max(box.maxR, p.r),
+      minC:Math.min(box.minC, p.c),
+      maxC:Math.max(box.maxC, p.c)
+    }), {minR:N, maxR:-1, minC:N, maxC:-1});
+  }
+
+  function allEndpointCells(generatedPaths) {
+    const endpoints = [];
+    generatedPaths.forEach((path, id) => {
+      endpoints.push({id, p:path[0]});
+      endpoints.push({id, p:path[path.length - 1]});
+    });
+    return endpoints;
+  }
+
+  function minDistanceToPath(point, path) {
+    return path.reduce((best, p) => Math.min(best, man(point, p)), N * 2);
+  }
+
+  function pathWrapsPoint(path, point) {
+    const hasLeft = path.some(p => p.r === point.r && p.c < point.c);
+    const hasRight = path.some(p => p.r === point.r && p.c > point.c);
+    const hasUp = path.some(p => p.c === point.c && p.r < point.r);
+    const hasDown = path.some(p => p.c === point.c && p.r > point.r);
+    const near = minDistanceToPath(point, path) <= 2;
+    return near && ((hasLeft && hasRight) || (hasUp && hasDown) || ((hasLeft || hasRight) && (hasUp || hasDown)));
+  }
+
+  function routeComplexity(path, endpoints, id) {
+    if (!path || path.length < 2) return -Infinity;
+    const bounds = pathBounds(path);
+    const boxArea = (bounds.maxR - bounds.minR + 1) * (bounds.maxC - bounds.minC + 1);
+    const endpointDistance = man(path[0], path[path.length - 1]);
+    const detour = path.length / Math.max(1, endpointDistance);
+    let wrappedEndpoints = 0;
+    let boxedEndpoints = 0;
+    for (const endpoint of endpoints) {
+      if (endpoint.id === id) continue;
+      const p = endpoint.p;
+      if (p.r >= bounds.minR && p.r <= bounds.maxR && p.c >= bounds.minC && p.c <= bounds.maxC) boxedEndpoints++;
+      if (pathWrapsPoint(path, p)) wrappedEndpoints++;
+    }
+    return wrappedEndpoints * 80
+      + boxedEndpoints * 14
+      + Math.min(path.length, 42) * 5
+      + Math.min(detour, 7) * 20
+      + pathTurnCount(path) * 8
+      + Math.min(boxArea, 40)
+      - longestStraightRun(path) * 8
+      - selfTouchCount(path) * 12;
+  }
+
+  function orderGeneratedPaths(generatedPaths) {
+    const endpoints = allEndpointCells(generatedPaths);
+    return generatedPaths
+      .map((path, id) => ({path, score:routeComplexity(path, endpoints, id)}))
+      .sort((a,b) => b.score - a.score)
+      .map(item => item.path);
+  }
+
+  function leadingRoutesAreComplex(generatedPaths) {
+    if (!generatedPaths.length || !generatedPaths[0] || generatedPaths[0].length < 2) return false;
+    const endpoints = allEndpointCells(generatedPaths);
+    const firstScore = routeComplexity(generatedPaths[0], endpoints, 0);
+    const firstWraps = endpoints.filter(endpoint => endpoint.id !== 0 && pathWrapsPoint(generatedPaths[0], endpoint.p)).length;
+    const firstDetour = generatedPaths[0].length / Math.max(1, man(generatedPaths[0][0], generatedPaths[0][generatedPaths[0].length - 1]));
+    return generatedPaths[0].length >= 24 && firstWraps >= 2 && firstDetour >= 2 && firstScore >= 260;
+  }
+
+  function longRouteBonus(generatedPaths) {
+    const lengths = generatedPaths.map(path => path.length).sort((a,b) => b - a);
+    let bonus = 0;
+    if (lengths[0] >= 28) bonus += 120;
+    if (lengths[1] >= 24) bonus += 90;
+    if (lengths[0] >= 34) bonus += 80;
+    return bonus;
+  }
+
+  function endpointSpreadScore(generatedPaths) {
+    const endpoints = allEndpointCells(generatedPaths).map(item => item.p);
+    const rows = endpoints.map(p => p.r);
+    const cols = endpoints.map(p => p.c);
+    const rowSpan = Math.max(...rows) - Math.min(...rows) + 1;
+    const colSpan = Math.max(...cols) - Math.min(...cols) + 1;
+    const quadrants = new Set(endpoints.map(p => (p.r < N / 2 ? 'T' : 'B') + (p.c < N / 2 ? 'L' : 'R'))).size;
+    return rowSpan * colSpan + quadrants * 18;
+  }
+
+  function endpointDistanceProblem(generatedPaths) {
+    const distances = generatedPaths.map(path => man(path[0], path[path.length - 1]));
+    const tooClose = distances.filter(distance => distance <= 3).length;
+    const longEnough = distances.filter(distance => distance >= 5).length;
+    return tooClose > 2 || longEnough < 4;
+  }
+
+  function hasLargeEmptyCornerBias(generatedPaths) {
+    const endpoints = allEndpointCells(generatedPaths).map(item => item.p);
+    const usedRows = new Set(endpoints.map(p => p.r));
+    const usedCols = new Set(endpoints.map(p => p.c));
+    return usedRows.size < 6 || usedCols.size < 6 || endpointSpreadScore(generatedPaths) < 95;
+  }
+
+  function scoreGeneratedPaths(generatedPaths) {
+    let score = 0;
+    let totalTurns = 0;
+    let totalEdgeCells = 0;
+    let totalBoxedEndpoints = 0;
+    let totalNearbyEndpoints = 0;
+    let pathsWithBoxedEndpoints = 0;
+    let pathsWithNearbyEndpoints = 0;
+    let longDetourPaths = 0;
+    let cleanLongDetourPaths = 0;
+    let wrappingPaths = 0;
+    let totalWrappedEndpoints = 0;
+    let severeSelfTouches = 0;
+    let longStraightPenalty = 0;
+    const endpoints = allEndpointCells(generatedPaths);
+    const switchBlocks = switchableBlockCount(generatedPaths);
+    score += endpointSpreadScore(generatedPaths) * 1.7;
+    if (endpointDistanceProblem(generatedPaths)) score -= 220;
+    if (hasLargeEmptyCornerBias(generatedPaths)) score -= 180;
+
+    for (let id=0; id<generatedPaths.length; id++) {
+      const path = generatedPaths[id];
+      const turns = pathTurnCount(path);
+      const endpointDistance = man(path[0], path[path.length - 1]);
+      const longestRun = longestStraightRun(path);
+      const edgeCells = edgeCellCount(path);
+      const selfTouches = selfTouchCount(path);
+      const bounds = pathBounds(path);
+      const boxArea = (bounds.maxR - bounds.minR + 1) * (bounds.maxC - bounds.minC + 1);
+      const detour = path.length / Math.max(1, endpointDistance);
+      let boxedEndpoints = 0;
+      let nearbyEndpoints = 0;
+      let wrappedEndpoints = 0;
+
+      for (const endpoint of endpoints) {
+        if (endpoint.id === id) continue;
+        const p = endpoint.p;
+        const inBox = p.r >= bounds.minR && p.r <= bounds.maxR && p.c >= bounds.minC && p.c <= bounds.maxC;
+        if (inBox) boxedEndpoints++;
+        if (minDistanceToPath(p, path) <= 2) nearbyEndpoints++;
+        if (pathWrapsPoint(path, p)) wrappedEndpoints++;
+      }
+
+      totalTurns += turns;
+      totalEdgeCells += edgeCells;
+      totalBoxedEndpoints += boxedEndpoints;
+      totalNearbyEndpoints += nearbyEndpoints;
+      totalWrappedEndpoints += wrappedEndpoints;
+      if (boxedEndpoints >= 2) pathsWithBoxedEndpoints++;
+      if (nearbyEndpoints >= 2) pathsWithNearbyEndpoints++;
+      if (wrappedEndpoints >= 1) wrappingPaths++;
+      if (path.length >= 18 && detour >= 2.1) longDetourPaths++;
+      if (path.length >= 18 && detour >= 2.1 && selfTouches <= 6) cleanLongDetourPaths++;
+      if (path.length >= 18 && selfTouches > 10) severeSelfTouches++;
+      longStraightPenalty += Math.max(0, longestRun - 4);
+
+      score += turns * 4;
+      score += Math.min(path.length, 24);
+      score += path.length >= 18 ? 45 : 0;
+      score += Math.min(detour, 6) * 14;
+      score += Math.min(endpointDistance, 8) * 6;
+      score += Math.min(boxedEndpoints, 5) * 8;
+      score += Math.min(nearbyEndpoints, 5) * 7;
+      score += Math.min(wrappedEndpoints, 4) * 18;
+      score += Math.min(Math.max(0, boxArea - path.length), 14) * 1.3;
+      score -= longestRun * 5;
+      score -= selfTouches * (path.length >= 18 ? 9 : 3);
+      score -= edgeCells * 0.6;
+    }
+
+    score -= switchBlocks * 8;
+
+    const averageTurns = totalTurns / generatedPaths.length;
+    const edgeRatio = totalEdgeCells / (N * N);
+    const passes = totalTurns >= 24
+      && averageTurns >= 3.4
+      && totalBoxedEndpoints >= 10
+      && totalNearbyEndpoints >= 10
+      && pathsWithBoxedEndpoints >= 3
+      && pathsWithNearbyEndpoints >= 3
+      && wrappingPaths >= 2
+      && totalWrappedEndpoints >= 3
+      && longDetourPaths >= 1
+      && cleanLongDetourPaths >= 1
+      && severeSelfTouches === 0
+      && longStraightPenalty <= 14
+      && edgeRatio <= 0.55;
+
+    return {passes, score};
+  }
+
+  function countPuzzleSolutions(candidate, maxSolutions=2, nodeLimit=45000) {
+    const work = blank(-1);
+    const heads = [];
+    const targets = [];
+    const done = [];
+    const answerNext = new Map();
+    const memo = new Map();
+    let nodes = 0;
+    let overflow = false;
+
+    for (let id=0; id<candidate.count; id++) {
+      const endpoints = candidate.endpoints[id];
+      heads[id] = {r:endpoints[0].r, c:endpoints[0].c};
+      targets[id] = {r:endpoints[1].r, c:endpoints[1].c};
+      done[id] = false;
+      work[heads[id].r][heads[id].c] = id;
+      work[targets[id].r][targets[id].c] = id;
+    }
+
+    if (candidate.answerPaths) {
+      candidate.answerPaths.forEach((path, id) => {
+        for (let i=0; i<path.length - 1; i++) {
+          answerNext.set(id + ':' + pathKey(path[i]), pathKey(path[i + 1]));
+        }
+      });
+    }
+
+    function openCells() {
+      let count = 0;
+      for (let r=0;r<N;r++) for (let c=0;c<N;c++) if (work[r][c] === -1) count++;
+      return count;
+    }
+
+    function isTarget(p, id) {
+      return same(p, targets[id]);
+    }
+
+    function legalMoves(id) {
+      if (done[id]) return [];
+      return neighbors(heads[id]).filter(p => work[p.r][p.c] === -1 || isTarget(p, id));
+    }
+
+    function canReachTarget(id) {
+      if (done[id]) return true;
+      const seen = new Set();
+      const stack = [heads[id]];
+      while (stack.length) {
+        const p = stack.pop();
+        const key = pathKey(p);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (isTarget(p, id)) return true;
+        for (const q of neighbors(p)) {
+          if (seen.has(pathKey(q))) continue;
+          if (work[q.r][q.c] === -1 || isTarget(q, id)) stack.push(q);
+        }
+      }
+      return false;
+    }
+
+    function hasIsolatedEmptyComponent() {
+      const seen = blank(false);
+      for (let r=0;r<N;r++) for (let c=0;c<N;c++) {
+        if (work[r][c] !== -1 || seen[r][c]) continue;
+        let touchesOpenRoute = false;
+        const stack = [{r,c}];
+        seen[r][c] = true;
+        while (stack.length) {
+          const p = stack.pop();
+          for (const q of neighbors(p)) {
+            if (work[q.r][q.c] === -1 && !seen[q.r][q.c]) {
+              seen[q.r][q.c] = true;
+              stack.push(q);
+            } else {
+              for (let id=0; id<candidate.count; id++) {
+                if (!done[id] && (same(q, heads[id]) || same(q, targets[id]))) touchesOpenRoute = true;
+              }
+            }
+          }
+        }
+        if (!touchesOpenRoute) return true;
+      }
+      return false;
+    }
+
+    function prune() {
+      for (let id=0; id<candidate.count; id++) {
+        if (!done[id] && legalMoves(id).length === 0) return true;
+        if (!canReachTarget(id)) return true;
+      }
+      return hasIsolatedEmptyComponent();
+    }
+
+    function chooseColor() {
+      let bestId = null;
+      let bestMoves = null;
+      for (let id=0; id<candidate.count; id++) {
+        if (done[id]) continue;
+        const moves = legalMoves(id);
+        if (bestMoves === null || moves.length < bestMoves.length) {
+          bestMoves = moves;
+          bestId = id;
+        }
+      }
+      return {id:bestId, moves:bestMoves || []};
+    }
+
+    function stateKey() {
+      let key = '';
+      for (let r=0;r<N;r++) for (let c=0;c<N;c++) key += work[r][c] < 0 ? '.' : String(work[r][c]);
+      key += '|';
+      for (let id=0; id<candidate.count; id++) key += (done[id] ? 'x' : heads[id].r + ',' + heads[id].c) + ';';
+      return key;
+    }
+
+    function dfs() {
+      if (overflow) return 0;
+      nodes++;
+      if (nodes > nodeLimit) {
+        overflow = true;
+        return 0;
+      }
+      if (prune()) return 0;
+
+      const empty = openCells();
+      const allDone = done.every(Boolean);
+      if (allDone) {
+        return empty === 0 ? 1 : 0;
+      }
+
+      const key = stateKey();
+      if (memo.has(key)) return memo.get(key);
+
+      const choice = chooseColor();
+      const id = choice.id;
+      const orderedMoves = choice.moves
+        .map(p => ({p, score:legalMoveScore(id, p)}))
+        .sort((a,b) => a.score - b.score);
+
+      let total = 0;
+      for (const move of orderedMoves) {
+        const p = move.p;
+        const oldHead = heads[id];
+        const wasDone = done[id];
+        const enteringTarget = isTarget(p, id);
+
+        heads[id] = {r:p.r, c:p.c};
+        if (!enteringTarget) work[p.r][p.c] = id;
+        else done[id] = true;
+
+        total += dfs();
+
+        if (!enteringTarget) work[p.r][p.c] = -1;
+        done[id] = wasDone;
+        heads[id] = oldHead;
+        if (total >= maxSolutions || overflow) {
+          total = Math.min(total, maxSolutions);
+          break;
+        }
+      }
+      if (!overflow) memo.set(key, total);
+      return total;
+    }
+
+    function legalMoveScore(id, p) {
+      const preferred = answerNext.get(id + ':' + pathKey(heads[id]));
+      if (preferred && preferred === pathKey(p)) return -20;
+      if (isTarget(p, id)) return openCells() === 0 ? -10 : 8;
+      return neighbors(p).filter(q => work[q.r][q.c] === -1 || isTarget(q, id)).length;
+    }
+
+    const solutions = dfs();
+    return {solutions, overflow, nodes, memo:memo.size};
+  }
+
+  function hasUniqueSolution(candidate) {
+    const result = countPuzzleSolutions(candidate, 2, 45000);
+    candidate.solutionCheck = result;
+    return !result.overflow && result.solutions === 1;
+  }
+
+  function generatePuzzle(requireUnique=false) {
+    const pairCount = 8;
+    let best = null;
+    let bestScore = -Infinity;
+
+    const attempts = requireUnique ? 1300 : 650;
+    for (let attempt=0; attempt<attempts; attempt++) {
+      const fullPath = generateFullPath();
+      const lengths = fullPath && splitLengths(fullPath.length, pairCount);
+      if (!fullPath || !lengths) continue;
+
+      let generatedPaths = [];
+      let index = 0;
+      let rejected = false;
+      for (const length of lengths) {
+        const path = fullPath.slice(index, index + length);
+        index += length;
+        if (path.length < 2) {
+          rejected = true;
+          break;
+        }
+        if (Math.random() < 0.5) path.reverse();
+        generatedPaths.push(path);
+      }
+      if (rejected || generatedPaths.length !== pairCount) continue;
+      generatedPaths = orderGeneratedPaths(generatedPaths);
+      if (generatedPathsQualityProblem(generatedPaths)) continue;
+      if (endpointDistanceProblem(generatedPaths)) continue;
+      if (hasLargeEmptyCornerBias(generatedPaths)) continue;
+
+      const quality = scoreGeneratedPaths(generatedPaths);
+      const leadingOk = leadingRoutesAreComplex(generatedPaths);
+      const adjustedScore = quality.score + longRouteBonus(generatedPaths) + (leadingOk ? 180 : -160);
+      if (adjustedScore > bestScore) {
+        bestScore = adjustedScore;
+        best = generatedPaths;
+      }
+      if (requireUnique && leadingOk && quality.score >= 620) {
+        const candidate = makePuzzleFromPaths(shufflePathIds(generatedPaths));
+        if (hasUniqueSolution(candidate)) return candidate;
+      }
+      if (!requireUnique && leadingOk && quality.passes) {
+        const candidate = makePuzzleFromPaths(shufflePathIds(generatedPaths));
+        return candidate;
+      }
+    }
+    if (!best || requireUnique) return null;
+    return makePuzzleFromPaths(shufflePathIds(best));
+  }
+
+  function clonePuzzle(source) {
+    return JSON.parse(JSON.stringify(source));
+  }
+
+  function transformPoint(p, n, transform) {
+    if (transform === 0) return {r:p.r, c:p.c};
+    if (transform === 1) return {r:p.c, c:n - 1 - p.r};
+    if (transform === 2) return {r:n - 1 - p.r, c:n - 1 - p.c};
+    if (transform === 3) return {r:n - 1 - p.c, c:p.r};
+    if (transform === 4) return {r:p.r, c:n - 1 - p.c};
+    if (transform === 5) return {r:n - 1 - p.r, c:p.c};
+    if (transform === 6) return {r:p.c, c:p.r};
+    return {r:n - 1 - p.c, c:n - 1 - p.r};
+  }
+
+  function randomizePuzzleOrientation(source) {
+    if (!source) return null;
+    const out = clonePuzzle(source);
+    const n = puzzleSize(out);
+    const transform = randInt(8);
+    const givens = blank(null, n);
+
+    out.endpoints = out.endpoints.map(pair => pair.map(p => transformPoint(p, n, transform)));
+    out.endpoints.forEach((pair, id) => {
+      givens[pair[0].r][pair[0].c] = id;
+      givens[pair[1].r][pair[1].c] = id;
+    });
+    out.givens = givens;
+    if (Array.isArray(out.answerPaths)) {
+      out.answerPaths = out.answerPaths.map(path => path.map(p => transformPoint(p, n, transform)));
+    }
+    out.size = n;
+    out.transform = transform;
+    return out;
+  }
+
+  function normalizeLoadedPuzzle(source) {
+    if (!source || typeof source !== 'object') return null;
+    const count = Number(source.count);
+    if (!Number.isInteger(count) || count < 1 || count > LETTERS.length) return null;
+    const size = Number(source.size || (Array.isArray(source.givens) ? source.givens.length : 0));
+    if (!Number.isInteger(size) || size < 7 || size > 11) return null;
+    if (!Array.isArray(source.givens) || source.givens.length !== size) return null;
+    if (!Array.isArray(source.endpoints) || source.endpoints.length !== count) return null;
+
+    const givens = blank(null, size);
+    for (let r=0; r<size; r++) {
+      if (!Array.isArray(source.givens[r]) || source.givens[r].length !== size) return null;
+      for (let c=0; c<size; c++) {
+        const value = source.givens[r][c];
+        if (value === null || value === undefined) continue;
+        const id = Number(value);
+        if (!Number.isInteger(id) || id < 0 || id >= count) return null;
+        givens[r][c] = id;
+      }
+    }
+
+    const endpoints = [];
+    for (let id=0; id<count; id++) {
+      const pair = source.endpoints[id];
+      if (!Array.isArray(pair) || pair.length !== 2) return null;
+      endpoints[id] = pair.map(p => {
+        if (!p || !Number.isInteger(p.r) || !Number.isInteger(p.c) || !isInside(p.r, p.c, size)) return null;
+        return {r:p.r, c:p.c};
+      });
+      if (!endpoints[id][0] || !endpoints[id][1]) return null;
+      for (const p of endpoints[id]) {
+        if (givens[p.r][p.c] !== id) return null;
+      }
+    }
+
+    let answerPaths = null;
+    if (Array.isArray(source.answerPaths)) {
+      if (source.answerPaths.length !== count) return null;
+      answerPaths = source.answerPaths.map(path => {
+        if (!Array.isArray(path) || path.length < 2) return null;
+        return path.map(p => {
+          if (!p || !Number.isInteger(p.r) || !Number.isInteger(p.c) || !isInside(p.r, p.c, size)) return null;
+          return {r:p.r, c:p.c};
+        });
+      });
+      if (answerPaths.some(path => !path)) return null;
+    }
+
+    return {size, count, givens, endpoints, answerPaths};
+  }
+
+  function normalizeLoadedPuzzles(data) {
+    const items = Array.isArray(data) ? data : [data];
+    return items.map(normalizeLoadedPuzzle).filter(Boolean);
+  }
+
+  function setPuzzleControlsEnabled(enabled) {
+    newBtn.disabled = !enabled;
+    clearBtn.disabled = !enabled;
+    solutionBtn.disabled = !enabled;
+  }
+
+  function activatePuzzle(source, statusText) {
+    const nextPuzzle = randomizePuzzleOrientation(source);
+    if (!nextPuzzle) return false;
+    puzzle = nextPuzzle;
+    puzzleNumber++;
+    resetState();
+    render();
+    if (statusText) setStatus(statusText);
+    setPuzzleControlsEnabled(true);
+    return true;
+  }
+
+  function pickRandomLoadedPuzzle() {
+    if (!loadedPuzzles.length) return null;
+    let nextIndex = randInt(loadedPuzzles.length);
+    if (loadedPuzzles.length > 1) {
+      while (nextIndex === loadedPuzzleIndex) nextIndex = randInt(loadedPuzzles.length);
+    }
+    loadedPuzzleIndex = nextIndex;
+    return loadedPuzzles[nextIndex];
+  }
+
+  function useRandomLoadedPuzzle(initial=false) {
+    const source = pickRandomLoadedPuzzle();
+    if (!source) return false;
+    const text = initial
+      ? 'Pulmapankki ladattu. Ratkaise satunnainen pulma.'
+      : 'Uusi satunnainen pulma ' + (loadedPuzzleIndex + 1) + '/' + loadedPuzzles.length + ' ladattu.';
+    return activatePuzzle(source, text);
+  }
+
+  async function loadInitialPuzzleBank() {
+    setPuzzleControlsEnabled(false);
+    setStatus('Ladataan pulmapankkia...');
+    try {
+      const response = await fetch('./puzzles.json', {cache:'no-cache'});
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      const parsed = normalizeLoadedPuzzles(await response.json());
+      if (!parsed.length) throw new Error('No valid puzzles');
+      loadedPuzzles = parsed;
+      loadedPuzzleIndex = -1;
+      puzzleNumber = 0;
+      useRandomLoadedPuzzle(true);
+    } catch (err) {
+      loadedPuzzles = normalizeLoadedPuzzles(PUZZLES);
+      loadedPuzzleIndex = -1;
+      puzzleNumber = 0;
+      if (useRandomLoadedPuzzle(true)) {
+        setStatus('puzzles.json ei latautunut. Käytössä sisäinen varapulma.', 'bad');
+      } else {
+        const generated = generatePuzzle(false);
+        if (activatePuzzle(generated, 'puzzles.json ei latautunut. Generoitiin aloituspulma.')) return;
+        setStatus('Pulmapankin lataus epäonnistui.', 'bad');
+      }
+    }
+  }
+
+  function resetState() {
+    const n = puzzleSize();
+    grid = blank(null, n);
+    paths = {};
+    active = null;
+    pointerIsDown = false;
+    solvedShown = false;
+    for (let r=0;r<n;r++) for (let c=0;c<n;c++) {
+      const id = givenAt(r,c);
+      if (id !== null) grid[r][c] = id;
+    }
+  }
+
+  function clearPath(id) {
+    if (!paths[id]) return;
+    for (const p of paths[id]) {
+      if (givenAt(p.r,p.c) === null && grid[p.r][p.c] === id) grid[p.r][p.c] = null;
+    }
+    delete paths[id];
+  }
+
+  function clearIncompleteActive() {
+    if (active && !active.complete) clearPath(active.id);
+    active = null;
+  }
+
+  function otherEndpoint(id, start) {
+    const eps = puzzle.endpoints[id];
+    return same(eps[0], start) ? eps[1] : eps[0];
+  }
+
+  function render() {
+    const n = puzzleSize();
+    board.style.gridTemplateColumns = `repeat(${n}, 1fr)`;
+    board.style.gridTemplateRows = `repeat(${n}, 1fr)`;
+    board.innerHTML = '<svg class="paths" viewBox="0 0 900 900" preserveAspectRatio="none"></svg>';
+    for (let r=0;r<n;r++) for (let c=0;c<n;c++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.dataset.r = r;
+      cell.dataset.c = c;
+      const id = givenAt(r,c);
+      if (id !== null) {
+        cell.classList.add('given');
+        if (active && active.id === id && same(active.start, {r,c})) cell.classList.add('active');
+        const dot = document.createElement('div');
+        dot.className = 'dot';
+        dot.style.background = colorFor(id);
+        dot.textContent = labelFor(id);
+        cell.appendChild(dot);
+      }
+      board.appendChild(cell);
+    }
+    drawPaths();
+    drawLegend();
+  }
+
+  function cellCenter(p) {
+    const unit = 900 / puzzleSize();
+    return {x:(p.c+0.5)*unit, y:(p.r+0.5)*unit};
+  }
+  function svgPath(path) {
+    return path.map((p,i) => { const q=cellCenter(p); return (i?'L':'M') + q.x + ' ' + q.y; }).join(' ');
+  }
+  function drawPaths() {
+    const svg = board.querySelector('svg');
+    for (const [idText, path] of Object.entries(paths)) {
+      if (!path || path.length < 2) continue;
+      const id = Number(idText);
+      const d = svgPath(path);
+      const glow = document.createElementNS('http://www.w3.org/2000/svg','path');
+      glow.setAttribute('d', d);
+      glow.setAttribute('stroke', colorFor(id));
+      glow.setAttribute('stroke-width', '58');
+      glow.setAttribute('class', 'pathGlow');
+      svg.appendChild(glow);
+      const line = document.createElementNS('http://www.w3.org/2000/svg','path');
+      line.setAttribute('d', d);
+      line.setAttribute('stroke', colorFor(id));
+      line.setAttribute('stroke-width', '24');
+      line.setAttribute('class', 'pathLine');
+      svg.appendChild(line);
+    }
+  }
+
+  function drawLegend() {
+    legend.innerHTML = '';
+    for (let id=0; id<puzzle.count; id++) {
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.style.color = colorFor(id);
+      chip.textContent = labelFor(id) + '–' + labelFor(id);
+      legend.appendChild(chip);
+    }
+  }
+
+  function cellFromEvent(e) {
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const cell = el && el.closest ? el.closest('.cell') : null;
+    if (!cell || !board.contains(cell)) return null;
+    return {r:Number(cell.dataset.r), c:Number(cell.dataset.c)};
+  }
+
+  function startAt(p) {
+    const id = givenAt(p.r,p.c);
+    if (id === null) return false;
+    solvedShown = false;
+    clearIncompleteActive();
+    clearPath(id);
+    paths[id] = [{r:p.r,c:p.c}];
+    grid[p.r][p.c] = id;
+    active = { id, start:{r:p.r,c:p.c}, target: otherEndpoint(id, p), complete:false };
+    setStatus(labelFor(id) + '-viiva aloitettu.');
+    render();
+    return true;
+  }
+
+  function extendTo(p) {
+    if (!active) return;
+    const id = active.id;
+    const path = paths[id];
+    const last = path[path.length-1];
+    if (same(last, p)) return;
+
+    const previous = path.length >= 2 ? path[path.length-2] : null;
+    if (previous && same(previous, p)) {
+      const removed = path.pop();
+      if (givenAt(removed.r, removed.c) === null) grid[removed.r][removed.c] = null;
+      render();
+      return;
+    }
+
+    if (man(last, p) !== 1) return;
+
+    const g = givenAt(p.r,p.c);
+    if (g !== null) {
+      if (g === id && same(p, active.target)) {
+        path.push({r:p.r,c:p.c});
+        grid[p.r][p.c] = id;
+        active.complete = true;
+        active = null;
+        setStatus(labelFor(id) + '-viiva valmis.');
+        render();
+        autoCheck();
+      }
+      return;
+    }
+
+    if (grid[p.r][p.c] !== null && grid[p.r][p.c] !== id) return;
+    const already = path.findIndex(q => same(q,p));
+    if (already >= 0) return;
+    path.push({r:p.r,c:p.c});
+    grid[p.r][p.c] = id;
+    render();
+  }
+
+  function endDrawing() {
+    pointerIsDown = false;
+    if (active) {
+      const id = active.id;
+      clearPath(id);
+      active = null;
+      setStatus('Keskeneräinen viiva poistettiin. Aloita uudesta pisteestä.');
+      render();
+      autoCheck();
+    }
+  }
+
+  function showSolution() {
+    if (!puzzle.answerPaths) {
+      setStatus('Tälle pulmapohjalle ei ole tallennettua näytettävää ratkaisua.', 'bad');
+      return;
+    }
+
+    grid = blank(null, puzzleSize());
+    paths = {};
+    active = null;
+    pointerIsDown = false;
+    solvedShown = true;
+
+    for (let id=0; id<puzzle.answerPaths.length; id++) {
+      paths[id] = puzzle.answerPaths[id].map(p => ({r:p.r, c:p.c}));
+      for (const p of paths[id]) grid[p.r][p.c] = id;
+    }
+    render();
+    setStatus('Yksi mahdollinen ratkaisu näytetty.', 'ok');
+  }
+
+  function autoCheck() {
+    if (solvedShown) return;
+    const n = puzzleSize();
+    for (let r=0;r<n;r++) for (let c=0;c<n;c++) {
+      if (grid[r][c] === null) return;
+      const given = givenAt(r,c);
+      if (given !== null && grid[r][c] !== given) return;
+    }
+
+    const covered = new Set();
+    for (let id=0; id<puzzle.count; id++) {
+      const endpoints = puzzle.endpoints[id];
+      if (!endpoints || endpoints.length !== 2) return;
+
+      const path = paths[id];
+      if (!path || path.length < 2) return;
+
+      const first = path[0];
+      const last = path[path.length - 1];
+      const matchesForward = same(first, endpoints[0]) && same(last, endpoints[1]);
+      const matchesBackward = same(first, endpoints[1]) && same(last, endpoints[0]);
+      if (!matchesForward && !matchesBackward) return;
+
+      const seenInPath = new Set();
+      for (let i=0; i<path.length; i++) {
+        const p = path[i];
+        if (!isInside(p.r, p.c, n)) return;
+        if (grid[p.r][p.c] !== id) return;
+
+        const key = pathKey(p);
+        if (seenInPath.has(key)) return;
+        if (covered.has(key)) return;
+        seenInPath.add(key);
+        covered.add(key);
+
+        const given = givenAt(p.r, p.c);
+        if (given !== null && given !== id) return;
+        if (i > 0 && man(path[i - 1], p) !== 1) return;
+      }
+    }
+
+    if (covered.size !== n * n) return;
+    solvedShown = true;
+    setStatus('Oikein ratkaistu!', 'ok');
+  }
+
+  board.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    const p = cellFromEvent(e);
+    if (!p) return;
+    pointerIsDown = true;
+    board.setPointerCapture?.(e.pointerId);
+    if (givenAt(p.r,p.c) !== null) startAt(p);
+    else clearIncompleteActive();
+  });
+
+  board.addEventListener('pointermove', e => {
+    if (!pointerIsDown || !active) return;
+    e.preventDefault();
+    const p = cellFromEvent(e);
+    if (p) extendTo(p);
+  });
+
+  board.addEventListener('pointerup', e => { e.preventDefault(); endDrawing(); });
+  board.addEventListener('pointercancel', endDrawing);
+
+  clearBtn.addEventListener('click', () => { resetState(); render(); setStatus('Lauta tyhjennetty.'); });
+  solutionBtn.addEventListener('click', showSolution);
+  newBtn.addEventListener('click', () => {
+    newBtn.disabled = true;
+    setStatus('Arvotaan pulmaa pulmapankista...');
+
+    setTimeout(() => {
+      const loaded = useRandomLoadedPuzzle(false);
+      newBtn.disabled = false;
+
+      if (!loaded) {
+        setStatus('Pulmapankista ei löytynyt ladattavaa pulmaa.', 'bad');
+        return;
+      }
+    }, 20);
+  });
+  generateBtn.addEventListener('click', () => {
+    generateBtn.disabled = true;
+    setStatus('Generoidaan pulmaa...');
+
+    setTimeout(() => {
+      const generated = generatePuzzle(false);
+      generateBtn.disabled = false;
+
+      if (activatePuzzle(generated)) {
+        setStatus('Pulma ' + puzzleNumber + ' generoitu. Vedä viivat pisteestä pisteeseen.');
+      } else {
+        setStatus('Pulman luonti epäonnistui. Kokeile uudestaan.', 'bad');
+      }
+    }, 20);
+  });
+  helpBtn.addEventListener('click', () => alert('Yhdistä saman kirjaimen pisteet. Vedä sormella reitti ruutu kerrallaan. Keskeneräinen viiva poistuu, kun nostat sormen. Ohjelma ilmoittaa automaattisesti, kun koko lauta on oikein täytetty.'));
+
+  loadInitialPuzzleBank();
+})();
+</script>
+</body>
+</html>

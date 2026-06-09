@@ -90,6 +90,7 @@
     '#ef2f90','#76c900','#f97316','#1f5f8b','#e11d48','#10b981',
     '#7c3aed','#facc15','#0ea5e9','#a16207'
   ];
+  const PUZZLE_STATE_KEY = 'arukone.currentPuzzle.v1';
   const PUZZLES = [{"count":8,"givens":[[0,null,null,null,null,null,null,null,null],[1,null,null,null,null,null,1,0,null],[2,null,null,null,null,null,null,null,null],[null,null,null,null,null,3,2,null,null],[null,null,null,3,4,null,null,null,null],[null,null,null,null,5,4,null,null,null],[null,null,null,null,null,5,6,null,null],[null,7,6,null,null,null,null,null,null],[null,null,null,null,null,null,null,null,7]],"endpoints":[[{"r":0,"c":0},{"r":1,"c":7}],[{"r":1,"c":6},{"r":1,"c":0}],[{"r":2,"c":0},{"r":3,"c":6}],[{"r":3,"c":5},{"r":4,"c":3}],[{"r":4,"c":4},{"r":5,"c":5}],[{"r":5,"c":4},{"r":6,"c":5}],[{"r":6,"c":6},{"r":7,"c":2}],[{"r":7,"c":1},{"r":8,"c":8}]]},{"count":8,"givens":[[7,null,null,null,null,null,null,null,null],[null,null,null,null,null,null,6,7,null],[6,5,null,null,null,null,null,null,null],[null,null,null,null,null,null,4,5,null],[null,null,4,3,null,null,null,null,null],[null,null,null,null,2,3,null,null,null],[null,null,null,null,null,2,1,null,null],[null,null,null,null,null,null,null,null,null],[null,1,0,null,null,null,null,null,0]],"endpoints":[[{"r":8,"c":8},{"r":8,"c":2}],[{"r":8,"c":1},{"r":6,"c":6}],[{"r":6,"c":5},{"r":5,"c":4}],[{"r":5,"c":5},{"r":4,"c":3}],[{"r":4,"c":2},{"r":3,"c":6}],[{"r":3,"c":7},{"r":2,"c":1}],[{"r":2,"c":0},{"r":1,"c":6}],[{"r":1,"c":7},{"r":0,"c":0}]]}];
 
   const board = document.getElementById('board');
@@ -119,7 +120,20 @@
   function man(a,b) { return Math.abs(a.r-b.r) + Math.abs(a.c-b.c); }
   function isInside(r,c,n=N) { return r>=0 && r<n && c>=0 && c<n; }
   function givenAt(r,c) { return puzzle.givens[r][c]; }
-  function setStatus(text, cls='') { statusEl.textContent = text; statusEl.className = 'status ' + cls; }
+  function difficultyStatusText(source=puzzle) {
+    const d = source && source.difficulty;
+    if (!d) return '';
+    const parts = ['Vaikeus: ' + d.level];
+    if (Number.isFinite(Number(d.score))) parts.push('pisteet ' + d.score);
+    if (Number.isFinite(Number(d.rank)) && loadedPuzzles.length) parts.push('pulma ' + d.rank + '/' + loadedPuzzles.length);
+    return parts.join(', ') + '.';
+  }
+
+  function setStatus(text, cls='') {
+    const difficulty = difficultyStatusText();
+    statusEl.textContent = difficulty ? text + ' ' + difficulty : text;
+    statusEl.className = 'status ' + cls;
+  }
   function pathKey(p) { return p.r + ',' + p.c; }
   function labelFor(id) { return LETTERS[id] || String(id + 1); }
   function colorFor(id) { return COLORS[id] || 'hsl(' + ((id * 47) % 360) + ' 82% 48%)'; }
@@ -749,11 +763,13 @@
     return {r:n - 1 - p.c, c:n - 1 - p.r};
   }
 
-  function randomizePuzzleOrientation(source) {
+  function randomizePuzzleOrientation(source, forcedTransform=null) {
     if (!source) return null;
     const out = clonePuzzle(source);
     const n = puzzleSize(out);
-    const transform = randInt(8);
+    const transform = Number.isInteger(forcedTransform) && forcedTransform >= 0 && forcedTransform < 8
+      ? forcedTransform
+      : randInt(8);
     const givens = blank(null, n);
 
     out.endpoints = out.endpoints.map(pair => pair.map(p => transformPoint(p, n, transform)));
@@ -768,6 +784,48 @@
     out.size = n;
     out.transform = transform;
     return out;
+  }
+
+  function difficultySortValue(source) {
+    const d = source && source.difficulty;
+    if (!d) return {rank:Infinity, score:Infinity};
+    const rank = Number.isFinite(Number(d.rank)) ? Number(d.rank) : Infinity;
+    const score = Number.isFinite(Number(d.score)) ? Number(d.score) : Infinity;
+    return {rank, score};
+  }
+
+  function sortPuzzlesByDifficulty(items) {
+    return items.slice().sort((a, b) => {
+      const da = difficultySortValue(a);
+      const db = difficultySortValue(b);
+      return da.rank - db.rank
+        || da.score - db.score
+        || puzzleSize(a) - puzzleSize(b)
+        || Number(a.count) - Number(b.count);
+    });
+  }
+
+  function readSavedPuzzleState() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PUZZLE_STATE_KEY) || 'null');
+      if (!saved || typeof saved !== 'object') return null;
+      return {
+        index:Number.isInteger(saved.index) ? saved.index : null,
+        transform:Number.isInteger(saved.transform) ? saved.transform : null
+      };
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function savePuzzleState(index=loadedPuzzleIndex, transform=puzzle && puzzle.transform) {
+    if (!Number.isInteger(index) || index < 0 || !loadedPuzzles.length) return;
+    try {
+      localStorage.setItem(PUZZLE_STATE_KEY, JSON.stringify({
+        index,
+        transform:Number.isInteger(transform) ? transform : 0
+      }));
+    } catch (err) {}
   }
 
   function normalizeLoadedPuzzle(source) {
@@ -818,12 +876,16 @@
       if (answerPaths.some(path => !path)) return null;
     }
 
-    return {size, count, givens, endpoints, answerPaths};
+    const normalized = {size, count, givens, endpoints, answerPaths};
+    if (source.difficulty && typeof source.difficulty === 'object') normalized.difficulty = clonePuzzle(source.difficulty);
+    if (source.solutionCheck && typeof source.solutionCheck === 'object') normalized.solutionCheck = clonePuzzle(source.solutionCheck);
+    if (source.unique === true) normalized.unique = true;
+    return normalized;
   }
 
   function normalizeLoadedPuzzles(data) {
     const items = Array.isArray(data) ? data : [data];
-    return items.map(normalizeLoadedPuzzle).filter(Boolean);
+    return sortPuzzlesByDifficulty(items.map(normalizeLoadedPuzzle).filter(Boolean));
   }
 
   function setPuzzleControlsEnabled(enabled) {
@@ -832,35 +894,45 @@
     solutionBtn.disabled = !enabled;
   }
 
-  function activatePuzzle(source, statusText) {
-    const nextPuzzle = randomizePuzzleOrientation(source);
+  function activatePuzzle(source, statusText, options={}) {
+    const nextPuzzle = randomizePuzzleOrientation(source, options.transform);
     if (!nextPuzzle) return false;
     puzzle = nextPuzzle;
-    puzzleNumber++;
+    puzzleNumber = Number.isInteger(options.index) ? options.index + 1 : puzzleNumber + 1;
     resetState();
     render();
     if (statusText) setStatus(statusText);
     setPuzzleControlsEnabled(true);
+    if (options.persist !== false && Number.isInteger(options.index)) {
+      savePuzzleState(options.index, nextPuzzle.transform);
+    }
     return true;
   }
 
-  function pickRandomLoadedPuzzle() {
+  function pickSequentialLoadedPuzzle() {
     if (!loadedPuzzles.length) return null;
-    let nextIndex = randInt(loadedPuzzles.length);
-    if (loadedPuzzles.length > 1) {
-      while (nextIndex === loadedPuzzleIndex) nextIndex = randInt(loadedPuzzles.length);
-    }
-    loadedPuzzleIndex = nextIndex;
-    return loadedPuzzles[nextIndex];
+    loadedPuzzleIndex = loadedPuzzleIndex < 0
+      ? 0
+      : (loadedPuzzleIndex + 1) % loadedPuzzles.length;
+    return loadedPuzzles[loadedPuzzleIndex];
   }
 
-  function useRandomLoadedPuzzle(initial=false) {
-    const source = pickRandomLoadedPuzzle();
+  function useSequentialLoadedPuzzle(initial=false, savedState=null) {
+    if (!loadedPuzzles.length) return false;
+    let transform = null;
+    if (initial && savedState && Number.isInteger(savedState.index) && savedState.index >= 0 && savedState.index < loadedPuzzles.length) {
+      loadedPuzzleIndex = savedState.index;
+      transform = savedState.transform;
+    } else {
+      const source = pickSequentialLoadedPuzzle();
+      if (!source) return false;
+    }
+    const source = loadedPuzzles[loadedPuzzleIndex];
     if (!source) return false;
     const text = initial
-      ? 'Pulmapankki ladattu. Ratkaise satunnainen pulma.'
-      : 'Uusi satunnainen pulma ' + (loadedPuzzleIndex + 1) + '/' + loadedPuzzles.length + ' ladattu.';
-    return activatePuzzle(source, text);
+      ? 'Pulmapankki ladattu. Jatketaan vaikeusjarjestyksessa.'
+      : 'Seuraava pulma ' + (loadedPuzzleIndex + 1) + '/' + loadedPuzzles.length + ' ladattu.';
+    return activatePuzzle(source, text, {index:loadedPuzzleIndex, transform});
   }
 
   async function loadInitialPuzzleBank() {
@@ -874,12 +946,12 @@
       loadedPuzzles = parsed;
       loadedPuzzleIndex = -1;
       puzzleNumber = 0;
-      useRandomLoadedPuzzle(true);
+      useSequentialLoadedPuzzle(true, readSavedPuzzleState());
     } catch (err) {
       loadedPuzzles = normalizeLoadedPuzzles(PUZZLES);
       loadedPuzzleIndex = -1;
       puzzleNumber = 0;
-      if (useRandomLoadedPuzzle(true)) {
+      if (useSequentialLoadedPuzzle(true, readSavedPuzzleState())) {
         setStatus('puzzles.json ei latautunut. Käytössä sisäinen varapulma.', 'bad');
       } else {
         const generated = generatePuzzle(false);
@@ -1147,10 +1219,10 @@
   solutionBtn.addEventListener('click', showSolution);
   newBtn.addEventListener('click', () => {
     newBtn.disabled = true;
-    setStatus('Arvotaan pulmaa pulmapankista...');
+    setStatus('Ladataan seuraavaa pulmaa vaikeusjarjestyksessa...');
 
     setTimeout(() => {
-      const loaded = useRandomLoadedPuzzle(false);
+      const loaded = useSequentialLoadedPuzzle(false);
       newBtn.disabled = false;
 
       if (!loaded) {
@@ -1175,6 +1247,11 @@
     }, 20);
   });
   helpBtn.addEventListener('click', () => alert('Yhdistä saman kirjaimen pisteet. Vedä sormella reitti ruutu kerrallaan. Keskeneräinen viiva poistuu, kun nostat sormen. Ohjelma ilmoittaa automaattisesti, kun koko lauta on oikein täytetty.'));
+
+  window.addEventListener('pagehide', () => savePuzzleState());
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') savePuzzleState();
+  });
 
   loadInitialPuzzleBank();
 })();

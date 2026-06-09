@@ -330,6 +330,69 @@
         : {nodes:650000, ms:30000};
   }
 
+  function difficultyLevel(score) {
+    if (score >= 125) return 'erittain vaikea';
+    if (score >= 90) return 'vaikea';
+    if (score >= 60) return 'keskitaso';
+    return 'helppo';
+  }
+
+  function pathBounds(path) {
+    return path.reduce((box, p) => ({
+      minR:Math.min(box.minR, p.r),
+      maxR:Math.max(box.maxR, p.r),
+      minC:Math.min(box.minC, p.c),
+      maxC:Math.max(box.maxC, p.c)
+    }), {minR:Infinity, maxR:-Infinity, minC:Infinity, maxC:-Infinity});
+  }
+
+  function endpointInteractionCount(candidate, answerPaths) {
+    if (!Array.isArray(answerPaths)) return 0;
+    const endpoints = candidate.endpoints.flatMap((pair, id) => pair.map(p => ({...p, id})));
+    let total = 0;
+    answerPaths.forEach((path, id) => {
+      const pathKeys = new Set(path.map(key));
+      const box = pathBounds(path);
+      for (const endpoint of endpoints) {
+        if (endpoint.id === id || pathKeys.has(key(endpoint))) continue;
+        const nearPath = path.some(p => man(p, endpoint) === 1);
+        const insideBox = endpoint.r > box.minR && endpoint.r < box.maxR && endpoint.c > box.minC && endpoint.c < box.maxC;
+        if (nearPath || insideBox) total++;
+      }
+    });
+    return total;
+  }
+
+  function calculateDifficulty(candidate, result={}) {
+    const answerPaths = candidate.answerPaths || result.answerPaths || solution || [];
+    const lengths = Array.isArray(answerPaths) ? answerPaths.map(path => path.length) : [];
+    const longestPath = lengths.length ? Math.max(...lengths) : 0;
+    const averagePath = lengths.length ? lengths.reduce((a, b) => a + b, 0) / lengths.length : 0;
+    const endpointInteractions = endpointInteractionCount(candidate, answerPaths);
+    const nodes = Math.max(1, Number(result.nodes || candidate.solutionCheck?.nodes || 1));
+    const timeoutPenalty = result.timeout ? 25 : 0;
+    const multiPenalty = result.solutions && result.solutions > 1 ? 10 : 0;
+    const score = Math.round(
+      Math.log10(nodes + 1) * 12
+      + longestPath * 0.8
+      + averagePath * 0.2
+      + endpointInteractions * 0.8
+      + candidate.count
+      + timeoutPenalty
+      + multiPenalty
+    );
+    return {
+      score,
+      level:difficultyLevel(score),
+      nodes,
+      timeout:!!result.timeout,
+      solutions:Number.isInteger(result.solutions) ? result.solutions : null,
+      longestPath,
+      averagePath:Math.round(averagePath * 10) / 10,
+      endpointInteractions
+    };
+  }
+
   function countSolutions(candidate, maxSolutions, nodeLimit, deadlineMs) {
     const n = candidate.size;
     const work = Array.from({length:n}, () => Array(n).fill(-1));
@@ -607,6 +670,7 @@
         solution = result.answerPaths;
         candidate.answerPaths = solution;
         candidate.solutionCheck = lastCheck;
+        candidate.difficulty = calculateDifficulty(candidate, result);
         setStatus('Ratkaisu loytyi. Solmuja: ' + result.nodes + '.', 'ok');
         showSolution = true;
         render();
@@ -638,6 +702,8 @@
       lastCheck = {mode:'uniqueness', solutions:result.solutions, timeout:result.timeout, nodes:result.nodes, memo:result.memo};
       if (result.answerPaths) {
         solution = result.answerPaths;
+        candidate.answerPaths = solution;
+        candidate.difficulty = calculateDifficulty(candidate, result);
         showSolution = true;
       }
       if (result.timeout) {
@@ -664,6 +730,7 @@
       candidate.solutionCheck = lastCheck;
       candidate.unique = lastCheck.mode === 'uniqueness' && !lastCheck.timeout && lastCheck.solutions === 1;
     }
+    candidate.difficulty = calculateDifficulty(candidate, lastCheck || {});
     return candidate;
   }
 

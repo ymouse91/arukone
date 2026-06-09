@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="fi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arukone Builder 2</title>
+<style>
+  :root {
+    --bg:#eef2f7; --panel:#ffffff; --ink:#111827; --muted:#64748b; --grid:#cbd5e1;
+    --accent:#2563eb; --ok:#16a34a; --bad:#dc2626; --board:min(calc(100vw - 24px), 620px);
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; display:flex; justify-content:center; }
+  .app { width:100%; max-width:1040px; padding:14px; display:grid; grid-template-columns:minmax(0, 1fr) 330px; gap:12px; }
+  header { grid-column:1 / -1; display:flex; align-items:end; justify-content:space-between; gap:12px; }
+  h1 { margin:0; font-size:24px; }
+  .version { color:var(--muted); font-size:12px; margin-top:3px; }
+  .panel { background:var(--panel); border:1px solid #e2e8f0; border-radius:12px; padding:12px; box-shadow:0 4px 16px rgba(15,23,42,.08); }
+  .boardWrap { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; }
+  .board { width:var(--board); height:var(--board); display:grid; background:#fff; border:3px solid #1f2937; border-radius:10px; overflow:hidden; touch-action:none; user-select:none; position:relative; }
+  .cell { border:1px solid var(--grid); display:flex; align-items:center; justify-content:center; position:relative; cursor:pointer; }
+  .cell:hover { background:#eff6ff; }
+  .dot { width:62%; height:62%; border-radius:999px; display:flex; align-items:center; justify-content:center; color:white; font-weight:900; text-shadow:0 1px 2px rgba(0,0,0,.45); border:2px solid rgba(255,255,255,.92); box-shadow:0 2px 5px rgba(15,23,42,.18); }
+  svg.paths { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:2; }
+  .solutionLine { fill:none; stroke-linecap:round; stroke-linejoin:round; opacity:.9; }
+  .cell { z-index:1; }
+  .cell.endpoint { z-index:3; }
+  .controls { display:grid; gap:10px; align-content:start; }
+  label { display:grid; gap:5px; font-size:13px; font-weight:750; color:#334155; }
+  input,select,button { font:inherit; }
+  input,select { min-height:38px; border:1px solid #cbd5e1; border-radius:8px; padding:6px 8px; background:white; }
+  button { min-height:40px; border:1px solid #cbd5e1; border-radius:8px; background:white; color:var(--ink); font-weight:800; padding:7px 10px; }
+  button.primary { background:var(--accent); color:white; border-color:var(--accent); }
+  button.ok { background:var(--ok); color:white; border-color:var(--ok); }
+  button.warn { color:var(--bad); }
+  button:disabled { opacity:.55; cursor:not-allowed; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .status { min-height:44px; color:var(--muted); line-height:1.35; font-size:14px; }
+  .status.ok { color:var(--ok); font-weight:800; }
+  .status.bad { color:var(--bad); font-weight:800; }
+  .meta { color:var(--muted); font-size:12px; line-height:1.4; }
+  .list { font-size:13px; color:#334155; line-height:1.35; max-height:240px; overflow:auto; border:1px solid #e2e8f0; border-radius:8px; padding:8px; }
+  .toolbar { width:var(--board); display:flex; justify-content:space-between; gap:8px; color:var(--muted); font-size:12px; }
+  code { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; }
+  @media (max-width: 860px) {
+    .app { grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+<main class="app">
+  <header>
+    <div>
+      <h1>Arukone Builder 2</h1>
+      <div class="version">Endpoint-editori + solveritarkistus</div>
+    </div>
+    <nav><a href="index.html">Peliin</a> | <a href="old/builder.html">Vanha builder</a></nav>
+  </header>
+
+  <section class="panel boardWrap">
+    <div id="board" class="board"></div>
+    <div class="toolbar">
+      <span id="nextPointLabel"></span>
+      <span>Poista piste klikkaamalla sita</span>
+    </div>
+  </section>
+
+  <aside class="panel controls">
+    <div class="row">
+      <label>Laudan koko
+        <select id="sizeSelect">
+          <option>7</option><option>8</option><option selected>9</option><option>10</option><option>11</option>
+        </select>
+      </label>
+      <label>Etsinnan taso
+        <select id="effortSelect">
+          <option value="fast">Nopea</option>
+          <option value="normal" selected>Perusteellinen</option>
+          <option value="deep">Sitkea</option>
+        </select>
+      </label>
+    </div>
+
+    <button id="solveBtn" class="primary">Tarkista ratkaistavuus</button>
+    <button id="uniqueBtn">Tarkista yksikasitteisyys</button>
+    <button id="toggleSolutionBtn">Nayta ratkaisu</button>
+    <button id="saveBtn" class="ok">Tallenna puzzles.json</button>
+    <button id="downloadBtn">Lataa JSON</button>
+    <button id="clearBtn" class="warn">Tyhjenna</button>
+
+    <div id="status" class="status">Lisaa paatepisteita klikkaamalla ruutuja. Pisteet paritetaan jarjestyksessa A1, A2, B1, B2...</div>
+    <div class="meta">
+      Pisteita voi olla haluttu parillinen maara. Tallennus kayttaa <code>/api/puzzles</code>-paatepistetta, jos sivu ajetaan paikallisella palvelimella; muuten JSON ladataan selaimesta tiedostona.
+    </div>
+    <div id="pointList" class="list"></div>
+  </aside>
+</main>
+
+<script>
+(() => {
+  'use strict';
+
+  const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const COLORS = [
+    '#ff1f5b','#2f7df6','#22c55e','#ffad0a','#8b45ff','#15aeca',
+    '#ef2f90','#76c900','#f97316','#1f5f8b','#e11d48','#10b981',
+    '#7c3aed','#facc15','#0ea5e9','#a16207','#db2777','#059669'
+  ];
+
+  const board = document.getElementById('board');
+  const statusEl = document.getElementById('status');
+  const sizeSelect = document.getElementById('sizeSelect');
+  const effortSelect = document.getElementById('effortSelect');
+  const solveBtn = document.getElementById('solveBtn');
+  const uniqueBtn = document.getElementById('uniqueBtn');
+  const toggleSolutionBtn = document.getElementById('toggleSolutionBtn');
+  const saveBtn = document.getElementById('saveBtn');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const pointList = document.getElementById('pointList');
+  const nextPointLabel = document.getElementById('nextPointLabel');
+
+  let size = Number(sizeSelect.value);
+  let points = [];
+  let solution = null;
+  let lastCheck = null;
+  let showSolution = false;
+
+  function colorFor(id) { return COLORS[id % COLORS.length]; }
+  function labelFor(id) { return LETTERS[id] || String(id + 1); }
+  function key(p) { return p.r + ',' + p.c; }
+  function same(a, b) { return a && b && a.r === b.r && a.c === b.c; }
+  function man(a, b) { return Math.abs(a.r - b.r) + Math.abs(a.c - b.c); }
+  function inside(r, c) { return r >= 0 && r < size && c >= 0 && c < size; }
+  function neighbors(p) {
+    return [{r:p.r-1,c:p.c},{r:p.r+1,c:p.c},{r:p.r,c:p.c-1},{r:p.r,c:p.c+1}].filter(q => inside(q.r, q.c));
+  }
+
+  function setStatus(text, kind='') {
+    statusEl.textContent = text;
+    statusEl.className = 'status' + (kind ? ' ' + kind : '');
+  }
+
+  function pointIndexAt(p) {
+    return points.findIndex(q => q && same(q, p));
+  }
+
+  function pairIdForPointIndex(index) {
+    return Math.floor(index / 2);
+  }
+
+  function endpointNumber(index) {
+    return index % 2 === 0 ? '1' : '2';
+  }
+
+  function svgPoint(p) {
+    const step = 100 / size;
+    return {
+      x:p.c * step + step / 2,
+      y:p.r * step + step / 2
+    };
+  }
+
+  function svgPath(path) {
+    return path.map((p, i) => {
+      const q = svgPoint(p);
+      return (i === 0 ? 'M' : 'L') + q.x + ' ' + q.y;
+    }).join(' ');
+  }
+
+  function render() {
+    board.style.gridTemplateColumns = `repeat(${size}, 1fr)`;
+    board.style.gridTemplateRows = `repeat(${size}, 1fr)`;
+    board.innerHTML = '<svg class="paths" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>';
+    drawSolution();
+
+    const pointMap = new Map(points.map((p, i) => p ? [key(p), i] : null).filter(Boolean));
+    for (let r=0; r<size; r++) for (let c=0; c<size; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.dataset.r = r;
+      cell.dataset.c = c;
+      const index = pointMap.get(r + ',' + c);
+      if (index !== undefined) {
+        const id = pairIdForPointIndex(index);
+        cell.classList.add('endpoint');
+        const dot = document.createElement('div');
+        dot.className = 'dot';
+        dot.style.background = colorFor(id);
+        dot.textContent = labelFor(id) + endpointNumber(index);
+        cell.appendChild(dot);
+      }
+      cell.addEventListener('click', () => togglePoint({r, c}));
+      board.appendChild(cell);
+    }
+
+    renderList();
+  }
+
+  function drawSolution() {
+    if (!showSolution || !solution) return;
+    const svg = board.querySelector('svg');
+    solution.forEach((path, id) => {
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      line.setAttribute('d', svgPath(path));
+      line.setAttribute('stroke', colorFor(id));
+      line.setAttribute('stroke-width', '3.2');
+      line.setAttribute('class', 'solutionLine');
+      svg.appendChild(line);
+    });
+  }
+
+  function renderList() {
+    const nextIndex = nextOpenPointIndex();
+    nextPointLabel.textContent = 'Seuraava: ' + labelFor(pairIdForPointIndex(nextIndex)) + endpointNumber(nextIndex);
+
+    if (!points.some(Boolean)) {
+      pointList.textContent = 'Ei pisteita.';
+      return;
+    }
+    const rows = [];
+    for (let i=0; i<points.length; i += 2) {
+      const id = i / 2;
+      const a = points[i];
+      const b = points[i + 1];
+      if (!a && !b) continue;
+      rows.push(labelFor(id) + ': ' + pointText(a) + ' - ' + pointText(b));
+    }
+    pointList.innerHTML = rows.map(row => '<div>' + row + '</div>').join('');
+  }
+
+  function pointText(p) {
+    return p ? '(' + (p.r + 1) + ',' + (p.c + 1) + ')' : 'tyhja';
+  }
+
+  function nextOpenPointIndex() {
+    const index = points.findIndex(p => !p);
+    return index >= 0 ? index : points.length;
+  }
+
+  function compactTrailingEmptyPoints() {
+    while (points.length && !points[points.length - 1]) points.pop();
+  }
+
+  function togglePoint(p) {
+    const existing = pointIndexAt(p);
+    if (existing >= 0) {
+      points[existing] = null;
+      compactTrailingEmptyPoints();
+      solution = null;
+      lastCheck = null;
+      showSolution = false;
+      setStatus('Piste ' + labelFor(pairIdForPointIndex(existing)) + endpointNumber(existing) + ' poistettu. Seuraava uusi piste tayttaa ensimmaisen tyhjan paikan.');
+      render();
+      return;
+    }
+    const targetIndex = nextOpenPointIndex();
+    if (targetIndex >= LETTERS.length * 2) {
+      setStatus('Pistepareja on liikaa nykyiselle merkistolle.', 'bad');
+      return;
+    }
+    points[targetIndex] = {r:p.r, c:p.c};
+    solution = null;
+    lastCheck = null;
+    showSolution = false;
+    setStatus('Piste ' + labelFor(pairIdForPointIndex(targetIndex)) + endpointNumber(targetIndex) + ' asetettu.');
+    render();
+  }
+
+  function buildCandidate() {
+    compactTrailingEmptyPoints();
+    const placed = points.filter(Boolean).length;
+    if (placed < 2) {
+      setStatus('Aseta vahintaan yksi pistepari.', 'bad');
+      return null;
+    }
+    if (placed % 2 !== 0) {
+      setStatus('Asetettuja pisteita taytyy olla parillinen maara.', 'bad');
+      return null;
+    }
+    if (points.some((p, i) => !p && i < points.length)) {
+      setStatus('Tayta tyhjiksi jaaneet pistepaikat ennen tarkistusta.', 'bad');
+      return null;
+    }
+    const count = points.length / 2;
+    const givens = Array.from({length:size}, () => Array(size).fill(null));
+    const endpoints = [];
+    const seen = new Set();
+    for (let id=0; id<count; id++) {
+      const a = points[id * 2];
+      const b = points[id * 2 + 1];
+      for (const p of [a, b]) {
+        if (!inside(p.r, p.c)) {
+          setStatus('Piste on laudan ulkopuolella.', 'bad');
+          return null;
+        }
+        const pKey = key(p);
+        if (seen.has(pKey)) {
+          setStatus('Samassa ruudussa on kaksi paatepistetta.', 'bad');
+          return null;
+        }
+        seen.add(pKey);
+        givens[p.r][p.c] = id;
+      }
+      endpoints.push([{r:a.r, c:a.c}, {r:b.r, c:b.c}]);
+    }
+    return {
+      size,
+      count,
+      givens,
+      endpoints,
+      source:'builder2',
+      createdAt:new Date().toISOString()
+    };
+  }
+
+  function firstSolutionLimit() {
+    return effortSelect.value === 'deep'
+      ? {nodes:120000000, ms:600000}
+      : effortSelect.value === 'fast'
+        ? {nodes:4000000, ms:60000}
+        : {nodes:30000000, ms:300000};
+  }
+
+  function uniquenessLimit() {
+    return effortSelect.value === 'deep'
+      ? {nodes:3000000, ms:120000}
+      : effortSelect.value === 'fast'
+        ? {nodes:80000, ms:3000}
+        : {nodes:650000, ms:30000};
+  }
+
+  function countSolutions(candidate, maxSolutions, nodeLimit, deadlineMs) {
+    const n = candidate.size;
+    const work = Array.from({length:n}, () => Array(n).fill(-1));
+    const heads = [];
+    const targets = [];
+    const done = [];
+    const routes = [];
+    const memo = new Map();
+    const started = performance.now();
+    let nodes = 0;
+    let timeout = false;
+    let firstSolution = null;
+
+    function pointKey(p) { return p.r + ',' + p.c; }
+    function localInside(p) { return p.r >= 0 && p.r < n && p.c >= 0 && p.c < n; }
+    function localNeighbors(p) {
+      return [{r:p.r-1,c:p.c},{r:p.r+1,c:p.c},{r:p.r,c:p.c-1},{r:p.r,c:p.c+1}].filter(localInside);
+    }
+    function isTarget(p, id) { return same(p, targets[id]); }
+    function isOpenTerminal(p) {
+      for (let id=0; id<candidate.count; id++) {
+        if (!done[id] && (same(p, heads[id]) || same(p, targets[id]))) return true;
+      }
+      return false;
+    }
+    function isOpenForEmpty(p) {
+      return work[p.r][p.c] === -1 || isOpenTerminal(p);
+    }
+
+    for (let id=0; id<candidate.count; id++) {
+      const pair = candidate.endpoints[id];
+      heads[id] = {r:pair[0].r, c:pair[0].c};
+      targets[id] = {r:pair[1].r, c:pair[1].c};
+      done[id] = false;
+      routes[id] = [{r:heads[id].r, c:heads[id].c}];
+      work[heads[id].r][heads[id].c] = id;
+      work[targets[id].r][targets[id].c] = id;
+    }
+
+    function openCount() {
+      let count = 0;
+      for (let r=0; r<n; r++) for (let c=0; c<n; c++) if (work[r][c] === -1) count++;
+      return count;
+    }
+
+    function moveAllowed(id, p) {
+      if (!(work[p.r][p.c] === -1 || isTarget(p, id))) return false;
+      if (isTarget(p, id)) return true;
+      for (const q of localNeighbors(p)) {
+        if (same(q, heads[id]) || isTarget(q, id)) continue;
+        if (work[q.r][q.c] === id) return false;
+      }
+      return true;
+    }
+
+    function legalMoves(id) {
+      if (done[id]) return [];
+      return localNeighbors(heads[id]).filter(p => moveAllowed(id, p));
+    }
+
+    function canReachTarget(id) {
+      if (done[id]) return true;
+      const seen = new Set();
+      const stack = [heads[id]];
+      while (stack.length) {
+        const p = stack.pop();
+        const pKey = pointKey(p);
+        if (seen.has(pKey)) continue;
+        seen.add(pKey);
+        if (isTarget(p, id)) return true;
+        for (const q of localNeighbors(p)) {
+          if (!seen.has(pointKey(q)) && (work[q.r][q.c] === -1 || isTarget(q, id))) stack.push(q);
+        }
+      }
+      return false;
+    }
+
+    function hasDeadEndCell() {
+      for (let r=0; r<n; r++) for (let c=0; c<n; c++) {
+        if (work[r][c] !== -1) continue;
+        const exits = localNeighbors({r,c}).filter(isOpenForEmpty).length;
+        if (exits < 2) return true;
+      }
+      return false;
+    }
+
+    function hasImpossibleEmptyComponent() {
+      const seen = new Set();
+      for (let r=0; r<n; r++) for (let c=0; c<n; c++) {
+        const start = {r,c};
+        const startKey = pointKey(start);
+        if (work[r][c] !== -1 || seen.has(startKey)) continue;
+        const touchesHead = Array(candidate.count).fill(false);
+        const touchesTarget = Array(candidate.count).fill(false);
+        const stack = [start];
+        seen.add(startKey);
+        while (stack.length) {
+          const p = stack.pop();
+          for (const q of localNeighbors(p)) {
+            const qKey = pointKey(q);
+            if (work[q.r][q.c] === -1 && !seen.has(qKey)) {
+              seen.add(qKey);
+              stack.push(q);
+            } else {
+              for (let id=0; id<candidate.count; id++) {
+                if (done[id]) continue;
+                if (same(q, heads[id])) touchesHead[id] = true;
+                if (same(q, targets[id])) touchesTarget[id] = true;
+              }
+            }
+          }
+        }
+        let canBeUsed = false;
+        for (let id=0; id<candidate.count; id++) {
+          if (touchesHead[id] && touchesTarget[id]) {
+            canBeUsed = true;
+            break;
+          }
+        }
+        if (!canBeUsed) return true;
+      }
+      return false;
+    }
+
+    function prune() {
+      if (hasDeadEndCell()) return true;
+      const open = openCount();
+      for (let id=0; id<candidate.count; id++) {
+        if (!done[id] && legalMoves(id).length === 0) return true;
+        if (!canReachTarget(id)) return true;
+        if (!done[id] && man(heads[id], targets[id]) > open + 1) return true;
+      }
+      return hasImpossibleEmptyComponent();
+    }
+
+    function stateKey() {
+      let out = '';
+      for (let r=0; r<n; r++) for (let c=0; c<n; c++) out += work[r][c] < 0 ? '.' : String.fromCharCode(65 + work[r][c]);
+      out += '|';
+      for (let id=0; id<candidate.count; id++) out += (done[id] ? 'x' : pointKey(heads[id])) + ';';
+      return out;
+    }
+
+    function wallDistance(p) {
+      return Math.min(p.r, p.c, n - 1 - p.r, n - 1 - p.c);
+    }
+
+    function chooseColor() {
+      let bestId = null;
+      let bestMoves = null;
+      let bestScore = Infinity;
+      for (let id=0; id<candidate.count; id++) {
+        if (done[id]) continue;
+        const moves = legalMoves(id);
+        const score = moves.length * 100 + man(heads[id], targets[id]) * 2 + wallDistance(heads[id]) + routes[id].length * 0.01;
+        if (bestMoves === null || score < bestScore) {
+          bestId = id;
+          bestMoves = moves;
+          bestScore = score;
+        }
+      }
+      return {id:bestId, moves:bestMoves || []};
+    }
+
+    function moveScore(id, p) {
+      if (isTarget(p, id)) return openCount() === 0 ? -10 : 8;
+      const onward = localNeighbors(p).filter(q => moveAllowed(id, q)).length;
+      return onward * 12 + man(p, targets[id]) * 3 + wallDistance(p);
+    }
+
+    function applyStep(id, p, trail) {
+      const enteringTarget = isTarget(p, id);
+      trail.push({id, p, oldHead:heads[id], oldDone:done[id], filled:!enteringTarget, routeLength:routes[id].length});
+      heads[id] = {r:p.r, c:p.c};
+      routes[id].push({r:p.r, c:p.c});
+      if (enteringTarget) done[id] = true;
+      else work[p.r][p.c] = id;
+    }
+
+    function undoTrail(trail) {
+      for (let i=trail.length - 1; i>=0; i--) {
+        const item = trail[i];
+        if (item.filled) work[item.p.r][item.p.c] = -1;
+        done[item.id] = item.oldDone;
+        heads[item.id] = item.oldHead;
+        routes[item.id].length = item.routeLength;
+      }
+    }
+
+    function applyForcedMoves(trail) {
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (let id=0; id<candidate.count; id++) {
+          if (done[id]) continue;
+          const moves = legalMoves(id);
+          if (moves.length === 0) return false;
+          if (moves.length === 1) {
+            applyStep(id, moves[0], trail);
+            changed = true;
+            break;
+          }
+        }
+      }
+      return true;
+    }
+
+    function dfs() {
+      if (timeout) return 0;
+      nodes++;
+      if (nodes > nodeLimit || performance.now() - started > deadlineMs) {
+        timeout = true;
+        return 0;
+      }
+
+      const forcedTrail = [];
+      if (!applyForcedMoves(forcedTrail)) {
+        undoTrail(forcedTrail);
+        return 0;
+      }
+      if (prune()) {
+        undoTrail(forcedTrail);
+        return 0;
+      }
+      if (done.every(Boolean)) {
+        const solved = openCount() === 0 ? 1 : 0;
+        if (solved && !firstSolution) {
+          firstSolution = routes.map(path => path.map(p => ({r:p.r, c:p.c})));
+        }
+        undoTrail(forcedTrail);
+        return solved;
+      }
+
+      const skey = stateKey();
+      if (memo.has(skey)) {
+        const cached = memo.get(skey);
+        undoTrail(forcedTrail);
+        return cached;
+      }
+
+      const choice = chooseColor();
+      let total = 0;
+      const moves = choice.moves.map(p => ({p, score:moveScore(choice.id, p)})).sort((a,b) => a.score - b.score);
+      for (const move of moves) {
+        const trail = [];
+        applyStep(choice.id, move.p, trail);
+        total += dfs();
+        undoTrail(trail);
+        if (total >= maxSolutions || timeout) {
+          total = Math.min(total, maxSolutions);
+          break;
+        }
+      }
+      if (!timeout) memo.set(skey, total);
+      undoTrail(forcedTrail);
+      return total;
+    }
+
+    const solutions = dfs();
+    return {solutions, timeout, nodes, memo:memo.size, answerPaths:firstSolution};
+  }
+
+  async function findSolution() {
+    const candidate = buildCandidate();
+    if (!candidate) return null;
+    solveBtn.disabled = true;
+    uniqueBtn.disabled = true;
+    try {
+      setStatus('Etsitaan ratkaisua...');
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const limit = firstSolutionLimit();
+      const result = countSolutions(candidate, 1, limit.nodes, limit.ms);
+      lastCheck = {mode:'solvability', solutions:result.solutions, timeout:result.timeout, nodes:result.nodes, memo:result.memo};
+      if (result.answerPaths) {
+        solution = result.answerPaths;
+        candidate.answerPaths = solution;
+        candidate.solutionCheck = lastCheck;
+        setStatus('Ratkaisu loytyi. Solmuja: ' + result.nodes + '.', 'ok');
+        showSolution = true;
+        render();
+        return candidate;
+      }
+      solution = null;
+      showSolution = false;
+      setStatus(result.timeout
+        ? 'Ratkaisua ei loytynyt aikarajassa. Solmuja: ' + result.nodes + '.'
+        : 'Pulma ei ole ratkaistavissa koko laudan tayttavana ratkaisuna.', 'bad');
+      render();
+      return null;
+    } finally {
+      solveBtn.disabled = false;
+      uniqueBtn.disabled = false;
+    }
+  }
+
+  async function checkUnique() {
+    const candidate = buildCandidate();
+    if (!candidate) return;
+    solveBtn.disabled = true;
+    uniqueBtn.disabled = true;
+    try {
+      setStatus('Tarkistetaan yksikasitteisyytta...');
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const limit = uniquenessLimit();
+      const result = countSolutions(candidate, 2, limit.nodes, limit.ms);
+      lastCheck = {mode:'uniqueness', solutions:result.solutions, timeout:result.timeout, nodes:result.nodes, memo:result.memo};
+      if (result.answerPaths) {
+        solution = result.answerPaths;
+        showSolution = true;
+      }
+      if (result.timeout) {
+        setStatus('Yksikasitteisyytta ei pystytty todistamaan aikarajassa. Solmuja: ' + result.nodes + '.', 'bad');
+      } else if (result.solutions === 1) {
+        setStatus('Pulma on yksikasitteinen. Solmuja: ' + result.nodes + '.', 'ok');
+      } else if (result.solutions === 0) {
+        setStatus('Pulma ei ole ratkaistavissa.', 'bad');
+      } else {
+        setStatus('Pulmalla on useampi ratkaisu. Solmuja: ' + result.nodes + '.', 'bad');
+      }
+      render();
+    } finally {
+      solveBtn.disabled = false;
+      uniqueBtn.disabled = false;
+    }
+  }
+
+  function currentPuzzleForSave() {
+    const candidate = buildCandidate();
+    if (!candidate) return null;
+    if (solution) candidate.answerPaths = solution.map(path => path.map(p => ({r:p.r, c:p.c})));
+    if (lastCheck) {
+      candidate.solutionCheck = lastCheck;
+      candidate.unique = lastCheck.mode === 'uniqueness' && !lastCheck.timeout && lastCheck.solutions === 1;
+    }
+    return candidate;
+  }
+
+  function downloadPuzzle(puzzle) {
+    const blob = new Blob([JSON.stringify([puzzle], null, 2) + '\n'], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'builder2_puzzle.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function savePuzzle() {
+    const puzzle = currentPuzzleForSave();
+    if (!puzzle) return;
+    try {
+      const response = await fetch('/api/puzzles', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(puzzle)
+      });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      setStatus('Pulma tallennettu palvelimen puzzles.json-tiedostoon.', 'ok');
+    } catch (err) {
+      downloadPuzzle(puzzle);
+      setStatus('Palvelintallennus ei onnistunut, joten latasin pulman JSON-tiedostona.', 'bad');
+    }
+  }
+
+  sizeSelect.addEventListener('change', () => {
+    size = Number(sizeSelect.value);
+    points = points.map(p => p && inside(p.r, p.c) ? p : null);
+    compactTrailingEmptyPoints();
+    solution = null;
+    lastCheck = null;
+    showSolution = false;
+    setStatus('Laudan koko vaihdettu. Ulkopuolelle jaaneet pisteet poistettiin.');
+    render();
+  });
+
+  solveBtn.addEventListener('click', findSolution);
+  uniqueBtn.addEventListener('click', checkUnique);
+  toggleSolutionBtn.addEventListener('click', () => {
+    showSolution = !showSolution;
+    render();
+  });
+  saveBtn.addEventListener('click', savePuzzle);
+  downloadBtn.addEventListener('click', () => {
+    const puzzle = currentPuzzleForSave();
+    if (puzzle) downloadPuzzle(puzzle);
+  });
+  clearBtn.addEventListener('click', () => {
+    points = [];
+    solution = null;
+    lastCheck = null;
+    showSolution = false;
+    setStatus('Lauta tyhjennetty.');
+    render();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

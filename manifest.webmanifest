@@ -1,7 +1,7 @@
 {
   "name": "Arukone",
   "short_name": "Arukone",
-  "description": "Arukone-peli valmiilla pulmapankilla ja generaattorilla.",
+  "description": "Arukone-peli valmiilla pulmapankilla.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

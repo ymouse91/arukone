@@ -50,7 +50,7 @@
 <body>
 <div class="app">
   <header>
-    <div><h1>Arukone</h1><div class="version">PWA · puzzles.json · generaattori mukana</div></div>
+    <div><h1>Arukone</h1><div class="version">PWA · puzzles.json</div></div>
     <button id="helpBtn">Ohje</button>
   </header>
 
@@ -59,7 +59,7 @@
       <button id="newBtn" class="primary" disabled>Uusi pulma</button>
       <button id="clearBtn" disabled>Tyhjennä</button>
       <button id="solutionBtn" disabled>Näytä ratkaisu</button>
-      <button id="generateBtn">Generoi</button>
+      <button id="prevBtn" disabled>Edellinen</button>
     </div>
     <div id="status" class="status">Vedä viiva värillisestä pisteestä saman kirjaimen pisteeseen.</div>
   </section>
@@ -99,7 +99,7 @@
   const newBtn = document.getElementById('newBtn');
   const clearBtn = document.getElementById('clearBtn');
   const solutionBtn = document.getElementById('solutionBtn');
-  const generateBtn = document.getElementById('generateBtn');
+  const prevBtn = document.getElementById('prevBtn');
   const helpBtn = document.getElementById('helpBtn');
 
   let puzzleNumber = 1;
@@ -890,6 +890,7 @@
 
   function setPuzzleControlsEnabled(enabled) {
     newBtn.disabled = !enabled;
+    prevBtn.disabled = !enabled;
     clearBtn.disabled = !enabled;
     solutionBtn.disabled = !enabled;
   }
@@ -917,6 +918,14 @@
     return loadedPuzzles[loadedPuzzleIndex];
   }
 
+  function pickPreviousLoadedPuzzle() {
+    if (!loadedPuzzles.length) return null;
+    loadedPuzzleIndex = loadedPuzzleIndex < 0
+      ? loadedPuzzles.length - 1
+      : (loadedPuzzleIndex - 1 + loadedPuzzles.length) % loadedPuzzles.length;
+    return loadedPuzzles[loadedPuzzleIndex];
+  }
+
   function useSequentialLoadedPuzzle(initial=false, savedState=null) {
     if (!loadedPuzzles.length) return false;
     let transform = null;
@@ -930,9 +939,17 @@
     const source = loadedPuzzles[loadedPuzzleIndex];
     if (!source) return false;
     const text = initial
-      ? 'Pulmapankki ladattu. Jatketaan vaikeusjarjestyksessa.'
+      ? 'Pulmapankki ladattu. Jatketaan vaikeusjärjestyksessä.'
       : 'Seuraava pulma ' + (loadedPuzzleIndex + 1) + '/' + loadedPuzzles.length + ' ladattu.';
     return activatePuzzle(source, text, {index:loadedPuzzleIndex, transform});
+  }
+
+  function usePreviousLoadedPuzzle() {
+    if (!loadedPuzzles.length) return false;
+    const source = pickPreviousLoadedPuzzle();
+    if (!source) return false;
+    const text = 'Edellinen pulma ' + (loadedPuzzleIndex + 1) + '/' + loadedPuzzles.length + ' ladattu.';
+    return activatePuzzle(source, text, {index:loadedPuzzleIndex});
   }
 
   async function loadInitialPuzzleBank() {
@@ -954,8 +971,6 @@
       if (useSequentialLoadedPuzzle(true, readSavedPuzzleState())) {
         setStatus('puzzles.json ei latautunut. Käytössä sisäinen varapulma.', 'bad');
       } else {
-        const generated = generatePuzzle(false);
-        if (activatePuzzle(generated, 'puzzles.json ei latautunut. Generoitiin aloituspulma.')) return;
         setStatus('Pulmapankin lataus epäonnistui.', 'bad');
       }
     }
@@ -1219,7 +1234,7 @@
   solutionBtn.addEventListener('click', showSolution);
   newBtn.addEventListener('click', () => {
     newBtn.disabled = true;
-    setStatus('Ladataan seuraavaa pulmaa vaikeusjarjestyksessa...');
+    setStatus('Ladataan seuraavaa pulmaa vaikeusjärjestyksessä...');
 
     setTimeout(() => {
       const loaded = useSequentialLoadedPuzzle(false);
@@ -1231,18 +1246,17 @@
       }
     }, 20);
   });
-  generateBtn.addEventListener('click', () => {
-    generateBtn.disabled = true;
-    setStatus('Generoidaan pulmaa...');
+  prevBtn.addEventListener('click', () => {
+    prevBtn.disabled = true;
+    setStatus('Ladataan edellistä pulmaa vaikeusjärjestyksessä...');
 
     setTimeout(() => {
-      const generated = generatePuzzle(false);
-      generateBtn.disabled = false;
+      const loaded = usePreviousLoadedPuzzle();
+      prevBtn.disabled = false;
 
-      if (activatePuzzle(generated)) {
-        setStatus('Pulma ' + puzzleNumber + ' generoitu. Vedä viivat pisteestä pisteeseen.');
-      } else {
-        setStatus('Pulman luonti epäonnistui. Kokeile uudestaan.', 'bad');
+      if (!loaded) {
+        setStatus('Pulmapankista ei löytynyt ladattavaa pulmaa.', 'bad');
+        return;
       }
     }, 20);
   });

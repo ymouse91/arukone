@@ -939,7 +939,7 @@
     const source = loadedPuzzles[loadedPuzzleIndex];
     if (!source) return false;
     const text = initial
-      ? 'Pulmapankki ladattu. Jatketaan vaikeusjärjestyksessä.'
+      ? 'Pulmapankki ladattu.'
       : 'Seuraava pulma ' + (loadedPuzzleIndex + 1) + '/' + loadedPuzzles.length + ' ladattu.';
     return activatePuzzle(source, text, {index:loadedPuzzleIndex, transform});
   }

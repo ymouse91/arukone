@@ -124,7 +124,7 @@
     const d = source && source.difficulty;
     if (!d) return '';
     const parts = ['Vaikeus: ' + d.level];
-    if (Number.isFinite(Number(d.score))) parts.push('pisteet ' + d.score);
+    //if (Number.isFinite(Number(d.score))) parts.push('pisteet ' + d.score);
     if (Number.isFinite(Number(d.rank)) && loadedPuzzles.length) parts.push('pulma ' + d.rank + '/' + loadedPuzzles.length);
     return parts.join(', ') + '.';
   }

@@ -44,8 +44,11 @@ function handleRequest(req, res) {
     return;
   }
 
-  const safePath = path.normalize(urlPath).replace(/^(\.\.[/\\])+/, '');
-  const filePath = path.join(root, safePath === '/' ? 'index.html' : safePath);
+  const safePath = path
+    .normalize(urlPath)
+    .replace(/^[/\\]+/, '')
+    .replace(/^(\.\.[/\\])+/, '');
+  const filePath = path.join(root, safePath === '' ? 'index.html' : safePath);
   if (!filePath.startsWith(root)) {
     res.writeHead(403);
     res.end('Forbidden');
@@ -61,8 +64,7 @@ function handleRequest(req, res) {
       'Content-Type': types[path.extname(filePath)] || 'application/octet-stream',
       'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
       'Pragma': 'no-cache',
-      'Expires': '0',
-      'Clear-Site-Data': '"cache"'
+      'Expires': '0'
     });
     res.end(data);
   });
